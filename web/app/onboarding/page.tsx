@@ -2,6 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import { linkFrameworksToOrg } from '@/lib/api';
+
+interface Framework {
+  id: string;
+  code: string;
+  label: string;
+}
 
 export default function OnboardingPage() {
   const [currentStep, setCurrentStep] = useState(1);
@@ -14,6 +21,8 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [userId, setUserId] = useState<string | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [frameworks, setFrameworks] = useState<Framework[]>([]);
 
   useEffect(() => {
     async function getUser() {
@@ -25,14 +34,28 @@ export default function OnboardingPage() {
     getUser();
   }, []);
 
-  const frameworks = [
-    { id: 'itil4', name: 'ITIL 4' },
-    { id: 'cobit', name: 'COBIT' },
-    { id: 'iso27001', name: 'ISO 27001' },
-    { id: 'itgc', name: 'ITGC' },
-    { id: 'dora', name: 'DORA' },
-    { id: 'eu_ai_act', name: 'EU AI Act' },
-  ];
+  useEffect(() => {
+    async function loadFrameworks() {
+      if (currentStep === 2) {
+        setLoading(true);
+        try {
+          const { data, error } = await supabase
+            .from('frameworks')
+            .select('*')
+            .order('label');
+
+          if (error) throw error;
+
+          setFrameworks(data || []);
+        } catch (err: any) {
+          setError(err.message || 'Failed to load frameworks');
+        } finally {
+          setLoading(false);
+        }
+      }
+    }
+    loadFrameworks();
+  }, [currentStep]);
 
   const processes = [
     { id: 'incident', name: 'Incident Management' },
@@ -46,6 +69,8 @@ export default function OnboardingPage() {
   async function handleNext() {
     if (currentStep === 1) {
       await handleStep1Submit();
+    } else if (currentStep === 2) {
+      await handleStep2Submit();
     } else if (currentStep < 3) {
       setCurrentStep(currentStep + 1);
     }
@@ -89,9 +114,29 @@ export default function OnboardingPage() {
 
       if (memberError) throw memberError;
 
+      setOrgId(org.id);
       setCurrentStep(2);
     } catch (err: any) {
       setError(err.message || 'Failed to create organization');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleStep2Submit() {
+    if (!orgId) {
+      setError('Organization not found');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await linkFrameworksToOrg(orgId, selectedFrameworks);
+      setCurrentStep(3);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save frameworks');
     } finally {
       setLoading(false);
     }
@@ -196,22 +241,26 @@ export default function OnboardingPage() {
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
             Choose the frameworks relevant to your organization
           </p>
-          <div className="space-y-2">
-            {frameworks.map((framework) => (
-              <label
-                key={framework.id}
-                className="flex items-center p-3 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedFrameworks.includes(framework.id)}
-                  onChange={() => toggleFramework(framework.id)}
-                  className="mr-3"
-                />
-                <span>{framework.name}</span>
-              </label>
-            ))}
-          </div>
+          {loading && frameworks.length === 0 ? (
+            <div className="text-center py-8">Loading frameworks...</div>
+          ) : (
+            <div className="space-y-2">
+              {frameworks.map((framework) => (
+                <label
+                  key={framework.id}
+                  className="flex items-center p-3 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedFrameworks.includes(framework.id)}
+                    onChange={() => toggleFramework(framework.id)}
+                    className="mr-3"
+                  />
+                  <span>{framework.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
