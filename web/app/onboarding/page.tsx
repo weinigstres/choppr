@@ -1,13 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase/client';
 
 export default function OnboardingPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [orgName, setOrgName] = useState('');
-  const [orgDomain, setOrgDomain] = useState('');
+  const [country, setCountry] = useState('');
+  const [sizeBucket, setSizeBucket] = useState('');
+  const [itRole, setItRole] = useState('');
   const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>([]);
   const [selectedProcesses, setSelectedProcesses] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function getUser() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        setUserId(session.user.id);
+      }
+    }
+    getUser();
+  }, []);
 
   const frameworks = [
     { id: 'itil4', name: 'ITIL 4' },
@@ -27,9 +43,57 @@ export default function OnboardingPage() {
     { id: 'configuration', name: 'Configuration Management' },
   ];
 
-  function handleNext() {
-    if (currentStep < 3) {
+  async function handleNext() {
+    if (currentStep === 1) {
+      await handleStep1Submit();
+    } else if (currentStep < 3) {
       setCurrentStep(currentStep + 1);
+    }
+  }
+
+  async function handleStep1Submit() {
+    if (!orgName.trim()) {
+      setError('Organization name is required');
+      return;
+    }
+    if (!userId) {
+      setError('User session not found');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data: org, error: orgError } = await supabase
+        .from('orgs')
+        .insert({
+          name: orgName,
+          country: country || null,
+          size_bucket: sizeBucket || null,
+          it_role: itRole || null,
+          owner_user_id: userId,
+        })
+        .select()
+        .single();
+
+      if (orgError) throw orgError;
+
+      const { error: memberError } = await supabase
+        .from('org_members')
+        .upsert({
+          org_id: org.id,
+          user_id: userId,
+          role: 'ADMIN',
+        });
+
+      if (memberError) throw memberError;
+
+      setCurrentStep(2);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create organization');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -57,13 +121,18 @@ export default function OnboardingPage() {
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      {error && (
+        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md">
+          {error}
+        </div>
+      )}
       {currentStep === 1 && (
         <div>
           <h2 className="text-2xl font-bold mb-4">Organization Details</h2>
           <div className="space-y-4">
             <div>
               <label htmlFor="orgName" className="block text-sm font-medium mb-2">
-                Organization Name
+                Organization Name *
               </label>
               <input
                 id="orgName"
@@ -75,15 +144,45 @@ export default function OnboardingPage() {
               />
             </div>
             <div>
-              <label htmlFor="orgDomain" className="block text-sm font-medium mb-2">
-                Domain
+              <label htmlFor="country" className="block text-sm font-medium mb-2">
+                Country
               </label>
               <input
-                id="orgDomain"
+                id="country"
                 type="text"
-                value={orgDomain}
-                onChange={(e) => setOrgDomain(e.target.value)}
-                placeholder="acme.com"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                placeholder="United States"
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-900 dark:border-gray-700"
+              />
+            </div>
+            <div>
+              <label htmlFor="sizeBucket" className="block text-sm font-medium mb-2">
+                Organization Size
+              </label>
+              <select
+                id="sizeBucket"
+                value={sizeBucket}
+                onChange={(e) => setSizeBucket(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-900 dark:border-gray-700"
+              >
+                <option value="">Select size</option>
+                <option value="<50">Less than 50</option>
+                <option value="50-250">50-250</option>
+                <option value="250-1000">250-1000</option>
+                <option value="1000+">1000+</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="itRole" className="block text-sm font-medium mb-2">
+                IT Role
+              </label>
+              <input
+                id="itRole"
+                type="text"
+                value={itRole}
+                onChange={(e) => setItRole(e.target.value)}
+                placeholder="e.g. Utility, Differentiator, Responder"
                 className="w-full px-3 py-2 border rounded-md dark:bg-gray-900 dark:border-gray-700"
               />
             </div>
@@ -144,7 +243,7 @@ export default function OnboardingPage() {
       <div className="flex justify-between mt-8 pt-6 border-t">
         <button
           onClick={handleBack}
-          disabled={currentStep === 1}
+          disabled={currentStep === 1 || loading}
           className="px-4 py-2 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Back
@@ -153,14 +252,16 @@ export default function OnboardingPage() {
           {currentStep < 3 ? (
             <button
               onClick={handleNext}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Next
+              {loading ? 'Saving...' : 'Next'}
             </button>
           ) : (
             <button
               onClick={handleSaveAndContinue}
-              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              disabled={loading}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save & Continue
             </button>
