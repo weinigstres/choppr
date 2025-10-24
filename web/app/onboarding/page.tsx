@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { linkFrameworksToOrg } from '@/lib/api';
+import { starterProcesses } from '@/data/starter-processes';
 
 interface Framework {
   id: string;
@@ -57,14 +59,14 @@ export default function OnboardingPage() {
     loadFrameworks();
   }, [currentStep]);
 
-  const processes = [
-    { id: 'incident', name: 'Incident Management' },
-    { id: 'change', name: 'Change Management' },
-    { id: 'problem', name: 'Problem Management' },
-    { id: 'service_request', name: 'Service Request Management' },
-    { id: 'asset', name: 'Asset Management' },
-    { id: 'configuration', name: 'Configuration Management' },
-  ];
+  const router = useRouter();
+
+  const valueStreamOrder: Record<string, number> = {
+    Strategy2Portfolio: 0,
+    Requirement2Deploy: 1,
+    Request2Fulfill: 2,
+    Detect2Correct: 3,
+  };
 
   async function handleNext() {
     if (currentStep === 1) {
@@ -148,8 +150,50 @@ export default function OnboardingPage() {
     }
   }
 
-  function handleSaveAndContinue() {
-    alert('Save functionality not implemented yet');
+  async function handleSaveAndContinue() {
+    if (!orgId) {
+      setError('Organization not found');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const processesToInsert = selectedProcesses.map((key) => {
+        const process = starterProcesses.find((p) => p.key === key);
+        if (!process) return null;
+
+        const streamIndex = valueStreamOrder[process.value_stream] || 0;
+        const processesInStream = starterProcesses.filter(
+          (p) => p.value_stream === process.value_stream
+        );
+        const rowIndex = processesInStream.findIndex((p) => p.key === key);
+
+        return {
+          org_id: orgId,
+          key: process.key,
+          name: process.name,
+          value_stream: process.value_stream,
+          x: streamIndex * 300,
+          y: rowIndex * 120,
+        };
+      }).filter(Boolean);
+
+      if (processesToInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from('canvas_processes')
+          .insert(processesToInsert);
+
+        if (insertError) throw insertError;
+      }
+
+      router.push('/app/canvas');
+    } catch (err: any) {
+      setError(err.message || 'Failed to create processes');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function toggleFramework(id: string) {
@@ -268,21 +312,26 @@ export default function OnboardingPage() {
         <div>
           <h2 className="text-2xl font-bold mb-4">Core Processes</h2>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Select the core processes to enable
+            Select the starter processes to enable
           </p>
           <div className="space-y-2">
-            {processes.map((process) => (
+            {starterProcesses.map((process) => (
               <label
-                key={process.id}
+                key={process.key}
                 className="flex items-center p-3 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
               >
                 <input
                   type="checkbox"
-                  checked={selectedProcesses.includes(process.id)}
-                  onChange={() => toggleProcess(process.id)}
+                  checked={selectedProcesses.includes(process.key)}
+                  onChange={() => toggleProcess(process.key)}
                   className="mr-3"
                 />
-                <span>{process.name}</span>
+                <div>
+                  <div className="font-medium">{process.name}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {process.key} - {process.value_stream}
+                  </div>
+                </div>
               </label>
             ))}
           </div>
